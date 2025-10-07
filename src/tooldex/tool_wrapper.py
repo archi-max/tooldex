@@ -46,11 +46,16 @@ import fcntl
 import struct
 import subprocess
 import argparse
+import shutil
+import shlex
 
 ESCAPE_KEY = b"\x1d"  # Ctrl-]
 DEFAULT_UTILITY = os.environ.get("UTILITY_CMD", "htop")
 DEFAULT_MARKER = os.environ.get("UTILITY_MARKER", "[[WRAPPER:TOOL]]")
 
+def _applescript_escape(s: str) -> str:
+    # AppleScript strings must be double-quoted; escape backslashes and quotes.
+    return s.replace("\\", "\\\\").replace('"', '\\"')
 
 def get_winsize(fd):
     try:
@@ -75,21 +80,67 @@ def in_tmux():
 
 def launch_utility_in_top_pane(cmd, pane=None):
     pane_id = pane or os.environ.get("TMUX_PANE")
-    if not in_tmux():
+    if in_tmux():
         try:
-            subprocess.Popen(["bash", "-lc", cmd])
-            os.write(1, b"\r\n[wrapper] Launched utility (not in tmux): " + cmd.encode() + b"\r\n")
+            # -v vertical split (top/bottom). -b puts the new pane ABOVE the current pane
+            subprocess.check_call(["tmux", "split-window", "-v", "-b", "-t", pane_id, "--", "bash", "-lc", cmd])
+            subprocess.call(["tmux", "select-layout", "-t", pane_id, "even-vertical"])
+            os.write(1, b"\r\n[wrapper] Utility launched in top tmux pane.\r\n")
         except Exception as e:
-            os.write(1, f"\r\n[wrapper] Failed to launch utility: {e}\r\n".encode())
+            os.write(1, f"\r\n[wrapper] tmux split failed: {e}\r\n".encode())
         return
-    try:
-        # -v vertical split (top/bottom). -b puts the new pane ABOVE the current pane
-        subprocess.check_call(["tmux", "split-window", "-v", "-b", "-t", pane_id, "--", "bash", "-lc", cmd])
-        subprocess.call(["tmux", "select-layout", "-t", pane_id, "even-vertical"])  # make heights even
-        os.write(1, b"\r\n[wrapper] Utility launched in top pane.\r\n")
-    except Exception as e:
-        os.write(1, f"\r\n[wrapper] tmux split failed: {e}\r\n".encode())
 
+    # Not in tmux → try to launch a NEW terminal window/tab
+    try:
+        # macOS (Terminal.app / iTerm will open a new window/tab)
+        if sys.platform == "darwin":
+            # Run the user's command under bash -lc to get a proper shell env.
+            payload = f'bash -lc "{_applescript_escape(cmd)}"'
+            osa = f'tell application "Terminal" to do script "{_applescript_escape(payload)}"\nactivate'
+            subprocess.Popen(["osascript", "-e", osa])
+            os.write(1, b"\r\n[wrapper] Launched utility in a new macOS Terminal window/tab.\r\n")
+            return
+
+        # WSL → use Windows Terminal if available
+        if "WSL_DISTRO_NAME" in os.environ:
+            # Requires wt.exe on PATH
+            subprocess.Popen([
+                "powershell.exe", "-NoProfile", "-Command",
+                "wt -w 0 nt bash -lc " + shlex.quote(cmd)
+            ])
+            os.write(1, b"\r\n[wrapper] Launched utility in a new Windows Terminal tab.\r\n")
+            return
+
+        # Linux with GUI (X11/Wayland) → try common terminal emulators
+        if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            candidates = [
+                ("kitty",              ["kitty", "-e", "bash", "-lc", cmd]),
+                ("wezterm",            ["wezterm", "start", "bash", "-lc", cmd]),
+                ("alacritty",          ["alacritty", "-e", "bash", "-lc", cmd]),
+                ("gnome-terminal",     ["gnome-terminal", "--", "bash", "-lc", cmd]),
+                ("kgx",                ["kgx", "--", "bash", "-lc", cmd]),  # GNOME Console
+                ("konsole",            ["konsole", "-e", "bash", "-lc", cmd]),
+                ("xfce4-terminal",     ["xfce4-terminal", "-e", f"bash -lc {shlex.quote(cmd)}"]),
+                ("xterm",              ["xterm", "-e", f"bash -lc {shlex.quote(cmd)}"]),
+                ("x-terminal-emulator",["x-terminal-emulator", "-e", "bash", "-lc", cmd]),
+            ]
+            for name, argv in candidates:
+                if shutil.which(name):
+                    subprocess.Popen(argv)
+                    os.write(1, f"\r\n[wrapper] Launched utility in new {name} window.\r\n".encode())
+                    return
+
+        # Fallback: no GUI terminal → run detached so it doesn't steal the TTY
+        subprocess.Popen(
+            ["bash", "-lc", cmd],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        os.write(1, b"\r\n[wrapper] No GUI terminal found; launched utility detached (no TTY).\r\n")
+    except Exception as e:
+        os.write(1, f"\r\n[wrapper] Failed to launch utility separately: {e}\r\n".encode())
 
 def is_gdb(cmd_and_args):
     return bool(cmd_and_args) and os.path.basename(cmd_and_args[0]).startswith("gdb")
@@ -173,7 +224,7 @@ def main():
     if in_tmux():
         os.write(1, b"[wrapper] Tip: you're in tmux; splits will appear here.\r\n")
     else:
-        os.write(1, b"[wrapper] Not in tmux; utility will open in a separate shell.\r\n")
+        os.write(1, b"[wrapper] Not in tmux; will try to open the utility in a new terminal window.\r\n")
 
     escape_armed = False
     tkey = (args.trigger_key or "u")[0].encode().lower()
