@@ -52,9 +52,6 @@ import tty
 UTILITY_PANES: set[str] = set()
 UTILITY_PROCS: list[subprocess.Popen] = []
 
-UTILITY_PANES: set[str] = set()
-UTILITY_PROCS: list[subprocess.Popen] = []
-
 ESCAPE_KEY = b"\x1d"  # Ctrl-]
 
 
