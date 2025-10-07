@@ -70,6 +70,8 @@ def _default_utility_factory() -> str:
 DEFAULT_UTILITY = _default_utility_factory()
 DEFAULT_MARKER = os.environ.get("UTILITY_MARKER", "[[WRAPPER:TOOL]]")
 DEFAULT_TRIGGER_KEY = os.environ.get("TOOLDEX_TRIGGER_KEY", "u")
+DEFAULT_UTILITY_LOG = os.environ.get("UTILITY_LOG_FILE")
+DEFAULT_UTILITY_HOLD = os.environ.get("UTILITY_HOLD_ON_EXIT", "0").lower() in {"1", "true", "yes"}
 
 def _applescript_escape(s: str) -> str:
     # AppleScript strings must be double-quoted; escape backslashes and quotes.
@@ -96,13 +98,27 @@ def in_tmux():
     return bool(os.environ.get("TMUX") and os.environ.get("TMUX_PANE"))
 
 
-def launch_utility_in_top_pane(cmd, pane=None):
+def _build_launcher_invocation(cmd: str, *, log_path: str | None, hold_on_exit: bool) -> str:
+    pieces = [
+        f"TOOLDEX_UTILITY_CMD={shlex.quote(cmd)}",
+        f"TOOLDEX_UTILITY_HOLD={'1' if hold_on_exit else '0'}",
+    ]
+    if log_path:
+        pieces.append(f"TOOLDEX_UTILITY_LOG={shlex.quote(log_path)}")
+
+    python_exec = shlex.quote(sys.executable or "python")
+    pieces.append(f"{python_exec} -m tooldex.utility_launcher")
+    return " ".join(pieces)
+
+
+def launch_utility_in_top_pane(cmd, pane=None, *, log_path: str | None = None, hold_on_exit: bool = False):
     pane_id = pane or os.environ.get("TMUX_PANE")
     if in_tmux():
         try:
             # -v vertical split (top/bottom). -b puts the new pane ABOVE the current pane
             primary_env = shlex.quote(pane_id)
-            env_cmd = f"TOOLDEX_PRIMARY_PANE={primary_env} {cmd}"
+            launcher_cmd = _build_launcher_invocation(cmd, log_path=log_path, hold_on_exit=hold_on_exit)
+            env_cmd = f"TOOLDEX_PRIMARY_PANE={primary_env} {launcher_cmd}"
             new_pane_id = subprocess.check_output(
                 [
                     "tmux",
@@ -131,12 +147,13 @@ def launch_utility_in_top_pane(cmd, pane=None):
 
     # Not in tmux → try to launch a NEW terminal window/tab
     try:
+        launcher_cmd = _build_launcher_invocation(cmd, log_path=log_path, hold_on_exit=hold_on_exit)
         # TODO: Provide a terminal mode option so the secondary terminal can start clean
         # or inherit the primary session's environment (cwd, environment variables, etc.).
         # macOS (Terminal.app / iTerm will open a new window/tab)
         if sys.platform == "darwin":
             # Run the user's command under bash -lc to get a proper shell env.
-            payload = f'bash -lc "{_applescript_escape(cmd)}"'
+            payload = f'bash -lc "{_applescript_escape(launcher_cmd)}"'
             osa = f'tell application "Terminal" to do script "{_applescript_escape(payload)}"\nactivate'
             proc = subprocess.Popen(["osascript", "-e", osa])
             UTILITY_PROCS.append(proc)
@@ -156,15 +173,15 @@ def launch_utility_in_top_pane(cmd, pane=None):
         # Linux with GUI (X11/Wayland) → try common terminal emulators
         if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
             candidates = [
-                ("kitty",              ["kitty", "-e", "bash", "-lc", cmd]),
-                ("wezterm",            ["wezterm", "start", "bash", "-lc", cmd]),
-                ("alacritty",          ["alacritty", "-e", "bash", "-lc", cmd]),
-                ("gnome-terminal",     ["gnome-terminal", "--", "bash", "-lc", cmd]),
-                ("kgx",                ["kgx", "--", "bash", "-lc", cmd]),  # GNOME Console
-                ("konsole",            ["konsole", "-e", "bash", "-lc", cmd]),
-                ("xfce4-terminal",     ["xfce4-terminal", "-e", f"bash -lc {shlex.quote(cmd)}"]),
-                ("xterm",              ["xterm", "-e", f"bash -lc {shlex.quote(cmd)}"]),
-                ("x-terminal-emulator",["x-terminal-emulator", "-e", "bash", "-lc", cmd]),
+                ("kitty",              ["kitty", "-e", "bash", "-lc", launcher_cmd]),
+                ("wezterm",            ["wezterm", "start", "bash", "-lc", launcher_cmd]),
+                ("alacritty",          ["alacritty", "-e", "bash", "-lc", launcher_cmd]),
+                ("gnome-terminal",     ["gnome-terminal", "--", "bash", "-lc", launcher_cmd]),
+                ("kgx",                ["kgx", "--", "bash", "-lc", launcher_cmd]),  # GNOME Console
+                ("konsole",            ["konsole", "-e", "bash", "-lc", launcher_cmd]),
+                ("xfce4-terminal",     ["xfce4-terminal", "-e", f"bash -lc {shlex.quote(launcher_cmd)}"]),
+                ("xterm",              ["xterm", "-e", f"bash -lc {shlex.quote(launcher_cmd)}"]),
+                ("x-terminal-emulator",["x-terminal-emulator", "-e", "bash", "-lc", launcher_cmd]),
             ]
             for name, argv in candidates:
                 if shutil.which(name):
@@ -175,7 +192,7 @@ def launch_utility_in_top_pane(cmd, pane=None):
 
         # Fallback: no GUI terminal → run detached so it doesn't steal the TTY
         proc = subprocess.Popen(
-            ["bash", "-lc", cmd],
+            ["bash", "-lc", launcher_cmd],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -209,6 +226,11 @@ def parse_args():
                    help="Single character to press after Ctrl-] to trigger the utility (default: env TOOLDEX_TRIGGER_KEY or 'u').")
     p.add_argument("--marker", default=DEFAULT_MARKER,
                    help="Output marker string to watch for (default: env UTILITY_MARKER or '[[WRAPPER:TOOL]]').")
+    p.add_argument("--utility-log", dest="utility_log", default=DEFAULT_UTILITY_LOG,
+                   help="Optional path to append utility status messages (default: env UTILITY_LOG_FILE).")
+    p.add_argument("--utility-hold-on-exit", action=argparse.BooleanOptionalAction,
+                   default=DEFAULT_UTILITY_HOLD,
+                   help="Keep the utility pane open after the command exits (default: only on failure; enable to hold on success).")
     p.add_argument("--no-marker-watch", action="store_true",
                    help="Disable watching child output for the marker.")
     p.add_argument("--no-gdb-inject", action="store_true",
@@ -312,7 +334,11 @@ def main():
                     if escape_armed:
                         escape_armed = False
                         if ch.lower() == tkey:
-                            launch_utility_in_top_pane(args.utility)
+                            launch_utility_in_top_pane(
+                                args.utility,
+                                log_path=args.utility_log,
+                                hold_on_exit=args.utility_hold_on_exit,
+                            )
                             continue
                         else:
                             # pass through the escape and the char since not a match
@@ -334,7 +360,11 @@ def main():
                     break
                 os.write(1, data)
                 if marker_bytes and not args.no_marker_watch and marker_bytes in data:
-                    launch_utility_in_top_pane(args.utility)
+                    launch_utility_in_top_pane(
+                        args.utility,
+                        log_path=args.utility_log,
+                        hold_on_exit=args.utility_hold_on_exit,
+                    )
 
     finally:
         try:
