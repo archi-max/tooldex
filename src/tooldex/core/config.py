@@ -19,7 +19,7 @@ def _project_root() -> Path:
 
 
 def _default_codex_config_path() -> Path:
-    return Path("..") / "configs" / "codex.toml"
+    return Path(__file__).resolve().parents[1] / "configs" / "codex.toml"
 
 
 def _search_directories() -> Sequence[Path]:
