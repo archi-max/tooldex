@@ -2,6 +2,8 @@
 
 tooldex is a terminal-first pair-programming companion that stays out of your way until you need it. Instead of replacing your shell, it listens for a hotkey, freezes the active tmux pane, and hands control to a purpose-built AI agent that can inspect context via MCP and suggest the next command, debug step, or explanation. When the exchange finishes, control snaps straight back to your running session—no reflowed buffers or confusing hand-offs.
 
+![Codex driving the primary tmux pane](docs/codex_debugging_uart.png)
+
 ## Key Ideas
 - **Bring-your-own CLI**: Run your usual tools (gdb, git, nvims) while tooldex augments them with targeted agent prompts.
 - **Ephemeral assistance**: AI agents activate only on demand, perform a scoped action, and then relinquish control.

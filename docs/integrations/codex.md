@@ -2,6 +2,8 @@
 
 ToolDex ships with a Codex CLI shim that forwards to the `codex` command-line binary while respecting application defaults and user overrides.
 
+![Codex driving the primary tmux pane](../codex_debugging_uart.png)
+
 ## Installing
 
 Install ToolDex with the Codex extra to pull in the Codex CLI dependencies:
