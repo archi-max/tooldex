@@ -12,6 +12,7 @@ from tooldex import tool_wrapper
 def test_parse_args_default_trigger_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHELL", "/bin/bash")
     monkeypatch.setattr(tool_wrapper, "DEFAULT_TRIGGER_KEY", "z", raising=False)
+    monkeypatch.setattr(tool_wrapper, "DEFAULT_UTILITY_HOLD", False, raising=False)
     monkeypatch.setattr(
         tool_wrapper.sys,
         "argv",
@@ -21,6 +22,7 @@ def test_parse_args_default_trigger_key(monkeypatch: pytest.MonkeyPatch) -> None
     args = tool_wrapper.parse_args()
 
     assert args.trigger_key == "z"
+    assert args.utility_hold_on_exit is False
 
 
 def test_cleanup_utilities_terminates_panes_and_processes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -53,6 +55,22 @@ def test_cleanup_utilities_terminates_panes_and_processes(monkeypatch: pytest.Mo
     assert dummy_proc.terminated is True
     assert tool_wrapper.UTILITY_PANES == set()
     assert tool_wrapper.UTILITY_PROCS == []
+
+
+def test_build_launcher_invocation_handles_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tool_wrapper.sys, "executable", "/usr/bin/python3")
+    command = "uv run python -m tooldex codex"
+
+    invocation = tool_wrapper._build_launcher_invocation(
+        command,
+        log_path="/tmp/log file.log",
+        hold_on_exit=True,
+    )
+
+    assert "TOOLDEX_UTILITY_CMD='uv run python -m tooldex codex'" in invocation
+    assert "TOOLDEX_UTILITY_LOG='/tmp/log file.log'" in invocation
+    assert "TOOLDEX_UTILITY_HOLD=1" in invocation
+    assert "/usr/bin/python3 -m tooldex.utility_launcher" in invocation
 
 
 def test_default_utility_prefers_env(monkeypatch: pytest.MonkeyPatch) -> None:

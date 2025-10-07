@@ -101,3 +101,7 @@ Additional arguments after `--` are forwarded to the Codex binary unchanged.
   ```
 - Press `Ctrl-]` followed by the trigger key (default `u`) to open Codex. Override the hotkey globally with `export TOOLDEX_TRIGGER_KEY=o` or per-run via `--trigger-key`.
 - When the primary process exits, ToolDex automatically closes any Codex panes or helper terminals that were spawned so the agent cannot keep running unattended.
+- If Codex exits immediately, re-run with `--utility-hold-on-exit` (or set
+  `UTILITY_HOLD_ON_EXIT=1`). The utility pane will stay open after the process
+  exits and print the exit code so you can review the error. Add
+  `--utility-log /path/to/file.log` to capture launcher diagnostics.
