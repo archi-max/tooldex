@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 
-import pytest
-
 from tooldex.mcp import server as mcp_server
 
 

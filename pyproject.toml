@@ -10,6 +10,7 @@ dependencies = [
 
 [project.scripts]
 tooldex = "tooldex.__main__:main"
+tooldex-codex = "tooldex.tool_wrapper:main"
 
 [dependency-groups]
 dev = [
