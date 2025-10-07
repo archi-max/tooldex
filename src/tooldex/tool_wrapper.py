@@ -6,7 +6,7 @@ for gdb, but works with anything (lldb, bash, ipython, node, etc.).
 
 Features
 - True TTY passthrough via pty: readline/editing, Ctrl-C, resizing work as normal.
-- Universal hotkey: Ctrl-] then a trigger key (default: 'u') opens the utility up top.
+- Universal hotkey: Ctrl-] then a trigger key (default: 'u', override via TOOLDEX_TRIGGER_KEY) opens the utility up top.
 - Optional marker watch: if the main command prints a marker string, we launch too.
 - gdb convenience: auto-inject a `tool` command that prints the marker (can disable).
 - If not in tmux, the utility spawns in a separate shell so nothing breaks.
@@ -28,7 +28,7 @@ Examples
   #   echo "[[WRAPPER:TOOL]]"    # will pop the utility pane
 
 While running
-  • Hotkey:  Ctrl-]  then  <trigger key> (default 'u')
+  • Hotkey:  Ctrl-]  then  <trigger key> (default 'u', or $TOOLDEX_TRIGGER_KEY if set)
   • In gdb:  type  tool   (unless --no-gdb-inject)
 
 Requirements
@@ -49,9 +49,13 @@ import argparse
 import shutil
 import shlex
 
+UTILITY_PANES: set[str] = set()
+UTILITY_PROCS: list[subprocess.Popen] = []
+
 ESCAPE_KEY = b"\x1d"  # Ctrl-]
 DEFAULT_UTILITY = os.environ.get("UTILITY_CMD", "htop")
 DEFAULT_MARKER = os.environ.get("UTILITY_MARKER", "[[WRAPPER:TOOL]]")
+DEFAULT_TRIGGER_KEY = os.environ.get("TOOLDEX_TRIGGER_KEY", "u")
 
 def _applescript_escape(s: str) -> str:
     # AppleScript strings must be double-quoted; escape backslashes and quotes.
@@ -85,7 +89,26 @@ def launch_utility_in_top_pane(cmd, pane=None):
             # -v vertical split (top/bottom). -b puts the new pane ABOVE the current pane
             primary_env = shlex.quote(pane_id)
             env_cmd = f"TOOLDEX_PRIMARY_PANE={primary_env} {cmd}"
-            subprocess.check_call(["tmux", "split-window", "-v", "-b", "-t", pane_id, "--", "bash", "-lc", env_cmd])
+            new_pane_id = subprocess.check_output(
+                [
+                    "tmux",
+                    "split-window",
+                    "-v",
+                    "-b",
+                    "-t",
+                    pane_id,
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                    "--",
+                    "bash",
+                    "-lc",
+                    env_cmd,
+                ],
+                text=True,
+            ).strip()
+            if new_pane_id:
+                UTILITY_PANES.add(new_pane_id)
             subprocess.call(["tmux", "select-layout", "-t", pane_id, "even-vertical"])
             os.write(1, b"\r\n[wrapper] Utility launched in top tmux pane.\r\n")
         except Exception as e:
@@ -101,7 +124,8 @@ def launch_utility_in_top_pane(cmd, pane=None):
             # Run the user's command under bash -lc to get a proper shell env.
             payload = f'bash -lc "{_applescript_escape(cmd)}"'
             osa = f'tell application "Terminal" to do script "{_applescript_escape(payload)}"\nactivate'
-            subprocess.Popen(["osascript", "-e", osa])
+            proc = subprocess.Popen(["osascript", "-e", osa])
+            UTILITY_PROCS.append(proc)
             os.write(1, b"\r\n[wrapper] Launched utility in a new macOS Terminal window/tab.\r\n")
             return
 
@@ -130,21 +154,24 @@ def launch_utility_in_top_pane(cmd, pane=None):
             ]
             for name, argv in candidates:
                 if shutil.which(name):
-                    subprocess.Popen(argv)
+                    proc = subprocess.Popen(argv)
+                    UTILITY_PROCS.append(proc)
                     os.write(1, f"\r\n[wrapper] Launched utility in new {name} window.\r\n".encode())
                     return
 
         # Fallback: no GUI terminal → run detached so it doesn't steal the TTY
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["bash", "-lc", cmd],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
+        UTILITY_PROCS.append(proc)
         os.write(1, b"\r\n[wrapper] No GUI terminal found; launched utility detached (no TTY).\r\n")
     except Exception as e:
         os.write(1, f"\r\n[wrapper] Failed to launch utility separately: {e}\r\n".encode())
+    return
 
 def is_gdb(cmd_and_args):
     return bool(cmd_and_args) and os.path.basename(cmd_and_args[0]).startswith("gdb")
@@ -164,8 +191,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Generic PTY wrapper: run ANY command, trigger a top tmux utility via hotkey or marker.")
     p.add_argument("--utility", "-u", default=DEFAULT_UTILITY,
                    help="Command to run for the utility pane (default: env UTILITY_CMD or 'htop').")
-    p.add_argument("--trigger-key", default="u",
-                   help="Single character to press after Ctrl-] to trigger the utility (default: 'u').")
+    p.add_argument("--trigger-key", default=DEFAULT_TRIGGER_KEY,
+                   help="Single character to press after Ctrl-] to trigger the utility (default: env TOOLDEX_TRIGGER_KEY or 'u').")
     p.add_argument("--marker", default=DEFAULT_MARKER,
                    help="Output marker string to watch for (default: env UTILITY_MARKER or '[[WRAPPER:TOOL]]').")
     p.add_argument("--no-marker-watch", action="store_true",
@@ -186,6 +213,23 @@ def parse_args():
         cmd = [shell, "-l"] if shell.endswith("bash") else [shell]
     args.cmd_and_args = cmd
     return args
+
+
+def _cleanup_utilities():
+    if UTILITY_PANES and in_tmux():
+        for pane_id in list(UTILITY_PANES):
+            try:
+                subprocess.check_call(["tmux", "kill-pane", "-t", pane_id])
+            except Exception:
+                pass
+        UTILITY_PANES.clear()
+    for proc in list(UTILITY_PROCS):
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        UTILITY_PROCS.remove(proc)
 
 
 def main():
@@ -287,6 +331,7 @@ def main():
             os.waitpid(pid, 0)
         except Exception:
             pass
+        _cleanup_utilities()
 
 
 if __name__ == "__main__":
