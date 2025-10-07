@@ -83,7 +83,9 @@ def launch_utility_in_top_pane(cmd, pane=None):
     if in_tmux():
         try:
             # -v vertical split (top/bottom). -b puts the new pane ABOVE the current pane
-            subprocess.check_call(["tmux", "split-window", "-v", "-b", "-t", pane_id, "--", "bash", "-lc", cmd])
+            primary_env = shlex.quote(pane_id)
+            env_cmd = f"TOOLDEX_PRIMARY_PANE={primary_env} {cmd}"
+            subprocess.check_call(["tmux", "split-window", "-v", "-b", "-t", pane_id, "--", "bash", "-lc", env_cmd])
             subprocess.call(["tmux", "select-layout", "-t", pane_id, "even-vertical"])
             os.write(1, b"\r\n[wrapper] Utility launched in top tmux pane.\r\n")
         except Exception as e:
@@ -92,6 +94,8 @@ def launch_utility_in_top_pane(cmd, pane=None):
 
     # Not in tmux → try to launch a NEW terminal window/tab
     try:
+        # TODO: Provide a terminal mode option so the secondary terminal can start clean
+        # or inherit the primary session's environment (cwd, environment variables, etc.).
         # macOS (Terminal.app / iTerm will open a new window/tab)
         if sys.platform == "darwin":
             # Run the user's command under bash -lc to get a proper shell env.
