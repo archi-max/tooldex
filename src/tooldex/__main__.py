@@ -12,6 +12,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tooldex", description="ToolDex command-line interface.")
     subparsers = parser.add_subparsers(dest="command")
 
+    parser.add_argument(
+        "-C",
+        "--config",
+        dest="global_config",
+        help="Path to a Codex config file applied to commands that support it.",
+    )
+
     codex_parser = subparsers.add_parser(
         "codex",
         help="Execute the Codex agent CLI using ToolDex configuration.",
@@ -47,7 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _handle_codex_run(args: argparse.Namespace) -> int:
-    return execute_codex(args.config, args.codex_args)
+    config_path = getattr(args, "config", None)
+    if config_path is None:
+        config_path = getattr(args, "global_config", None)
+    return execute_codex(config_path, args.codex_args)
 
 
 def _handle_codex_init(args: argparse.Namespace) -> int:
@@ -57,8 +67,17 @@ def _handle_codex_init(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    arg_list = list(argv) if argv is not None else sys.argv[1:]
+
+    passthrough: list[str] = []
+    if "--" in arg_list:
+        sentinel_index = arg_list.index("--")
+        passthrough = arg_list[sentinel_index + 1 :]
+        arg_list = arg_list[:sentinel_index]
+
     parser = _build_parser()
-    parsed_args, extras = parser.parse_known_args(argv)
+    parsed_args, extras = parser.parse_known_args(arg_list)
+    extras.extend(passthrough)
 
     if getattr(parsed_args, "command", None) == "codex" and getattr(parsed_args, "codex_command", None) is None:
         parsed_args.codex_args = extras
