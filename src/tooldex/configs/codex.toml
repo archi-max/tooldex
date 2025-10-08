@@ -11,8 +11,8 @@ terminal_mcp = "tooldex-shell"
 approval_policy = "on-request"
 
 [codex.mcp_servers.tooldex-shell]
-command = "uv"
-args = ["run", "python", "-m", "tooldex.mcp"]
+command = "tooldex-mcp"
+args = []
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 
