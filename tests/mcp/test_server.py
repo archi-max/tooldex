@@ -122,6 +122,46 @@ def test_subscription_updates(monkeypatch):
     assert mcp_server.unsubscribe_primary_pane(token) is False
 
 
+def test_subscription_detects_redraw(monkeypatch):
+    monkeypatch.setattr(mcp_server, "PRIMARY_PANE", "%7")
+
+    tmux_calls: list[tuple[str, ...]] = []
+    display_values = deque(["3 2", "3 2", "3 2"])
+    capture_values = deque(["line1\nline2\n", "lineA\nlineB\n"])
+
+    async def fake_tmux(*args: str) -> str:
+        tmux_calls.append(args)
+        if args[1] == "display-message":
+            return f"{display_values.popleft()}\n"
+        if args[1] == "capture-pane":
+            return capture_values.popleft()
+        raise AssertionError(f"Unexpected tmux call: {args}")
+
+    async def fake_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr(mcp_server, "_run_tmux_subprocess", fake_tmux)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    ctx = DummyContext()
+    sub = asyncio.run(mcp_server.subscribe_primary_pane(ctx))
+    token = sub["token"]
+
+    update = asyncio.run(
+        mcp_server.fetch_primary_pane_updates(
+            ctx,
+            token=token,
+            timeout_seconds=1.0,
+            max_lines=5,
+        )
+    )
+
+    assert update["timed_out"] is False
+    assert update["new_lines"] == ["lineA", "lineB"]
+    assert tmux_calls.count(("tmux", "capture-pane", "-t", "%7", "-p", "-S", "-6")) == 2
+    assert len([msg for lvl, msg in ctx.messages if lvl == "debug"]) >= 1
+
+
 def test_agent_guide_resource() -> None:
     guide = mcp_server.agent_guide()
     assert guide.startswith("# Tooldex Shell MCP Guide")

@@ -78,6 +78,8 @@ class PaneSubscription:
     pane: str
     include_colors: bool
     lines_recorded: int
+    last_snapshot: list[str]
+    snapshot_ready: bool
 
 
 _pane_subscriptions: Dict[str, PaneSubscription] = {}
@@ -220,6 +222,8 @@ async def subscribe_primary_pane(
         pane=pane,
         include_colors=include_colors,
         lines_recorded=total_lines,
+        last_snapshot=initial_content,
+        snapshot_ready=bool(initial_content),
     )
 
     await ctx.info(
@@ -254,12 +258,18 @@ async def fetch_primary_pane_updates(
     while True:
         total_lines = await _get_pane_line_count(pane)
         diff = total_lines - state.lines_recorded
+        snapshot_limit = max(1, max(max_lines, len(state.last_snapshot)))
+
         if diff > 0:
             capture_count = max(1, min(max_lines, diff))
             new_content, was_truncated = await _capture_pane_lines(
                 pane, capture_count, state.include_colors
             )
             state.lines_recorded = total_lines
+            # Maintain a rolling snapshot for redraw detection.
+            combined_snapshot = state.last_snapshot + new_content
+            state.last_snapshot = combined_snapshot[-snapshot_limit:]
+            state.snapshot_ready = True
             _pane_subscriptions[token] = state
             truncated = was_truncated or diff > max_lines
             await ctx.debug(
@@ -273,6 +283,36 @@ async def fetch_primary_pane_updates(
                 "truncated": truncated,
                 "timed_out": False,
             }
+
+        new_snapshot, snapshot_truncated = await _capture_pane_lines(
+            pane, snapshot_limit, state.include_colors
+        )
+
+        if not state.snapshot_ready:
+            state.last_snapshot = new_snapshot[-snapshot_limit:]
+            state.snapshot_ready = True
+            state.lines_recorded = total_lines
+            _pane_subscriptions[token] = state
+        elif new_snapshot != state.last_snapshot:
+            state.last_snapshot = new_snapshot[-snapshot_limit:]
+            state.lines_recorded = total_lines
+            _pane_subscriptions[token] = state
+            truncated = snapshot_truncated
+            await ctx.debug(
+                f"Subscription {token} detected pane redraw; emitting {len(new_snapshot)} lines."
+            )
+            return {
+                "token": token,
+                "pane": pane,
+                "new_lines": new_snapshot,
+                "lines_recorded": total_lines,
+                "truncated": truncated,
+                "timed_out": False,
+            }
+        else:
+            state.last_snapshot = new_snapshot[-snapshot_limit:]
+            state.lines_recorded = total_lines
+            _pane_subscriptions[token] = state
 
         if time.monotonic() >= deadline:
             return {
