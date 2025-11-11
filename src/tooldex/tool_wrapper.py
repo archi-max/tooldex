@@ -146,63 +146,7 @@ def launch_utility_in_top_pane(cmd, pane=None, *, log_path: str | None = None, h
         return
 
     # Not in tmux → try to launch a NEW terminal window/tab
-    try:
-        launcher_cmd = _build_launcher_invocation(cmd, log_path=log_path, hold_on_exit=hold_on_exit)
-        # TODO: Provide a terminal mode option so the secondary terminal can start clean
-        # or inherit the primary session's environment (cwd, environment variables, etc.).
-        # macOS (Terminal.app / iTerm will open a new window/tab)
-        if sys.platform == "darwin":
-            # Run the user's command under bash -lc to get a proper shell env.
-            payload = f'bash -lc "{_applescript_escape(launcher_cmd)}"'
-            osa = f'tell application "Terminal" to do script "{_applescript_escape(payload)}"\nactivate'
-            proc = subprocess.Popen(["osascript", "-e", osa])
-            UTILITY_PROCS.append(proc)
-            os.write(1, b"\r\n[wrapper] Launched utility in a new macOS Terminal window/tab.\r\n")
-            return
-
-        # WSL → use Windows Terminal if available
-        if "WSL_DISTRO_NAME" in os.environ:
-            # Requires wt.exe on PATH
-            subprocess.Popen([
-                "powershell.exe", "-NoProfile", "-Command",
-                "wt -w 0 nt bash -lc " + shlex.quote(cmd)
-            ])
-            os.write(1, b"\r\n[wrapper] Launched utility in a new Windows Terminal tab.\r\n")
-            return
-
-        # Linux with GUI (X11/Wayland) → try common terminal emulators
-        if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
-            candidates = [
-                ("kitty",              ["kitty", "-e", "bash", "-lc", launcher_cmd]),
-                ("wezterm",            ["wezterm", "start", "bash", "-lc", launcher_cmd]),
-                ("alacritty",          ["alacritty", "-e", "bash", "-lc", launcher_cmd]),
-                ("gnome-terminal",     ["gnome-terminal", "--", "bash", "-lc", launcher_cmd]),
-                ("kgx",                ["kgx", "--", "bash", "-lc", launcher_cmd]),  # GNOME Console
-                ("konsole",            ["konsole", "-e", "bash", "-lc", launcher_cmd]),
-                ("xfce4-terminal",     ["xfce4-terminal", "-e", f"bash -lc {shlex.quote(launcher_cmd)}"]),
-                ("xterm",              ["xterm", "-e", f"bash -lc {shlex.quote(launcher_cmd)}"]),
-                ("x-terminal-emulator",["x-terminal-emulator", "-e", "bash", "-lc", launcher_cmd]),
-            ]
-            for name, argv in candidates:
-                if shutil.which(name):
-                    proc = subprocess.Popen(argv)
-                    UTILITY_PROCS.append(proc)
-                    os.write(1, f"\r\n[wrapper] Launched utility in new {name} window.\r\n".encode())
-                    return
-
-        # Fallback: no GUI terminal → run detached so it doesn't steal the TTY
-        proc = subprocess.Popen(
-            ["bash", "-lc", launcher_cmd],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-        UTILITY_PROCS.append(proc)
-        os.write(1, b"\r\n[wrapper] No GUI terminal found; launched utility detached (no TTY).\r\n")
-    except Exception as e:
-        os.write(1, f"\r\n[wrapper] Failed to launch utility separately: {e}\r\n".encode())
-    return
+    raise RuntimeError("Please run in a tmux terminal")
 
 def is_gdb(cmd_and_args):
     return bool(cmd_and_args) and os.path.basename(cmd_and_args[0]).startswith("gdb")
