@@ -9,8 +9,20 @@ from tooldex.core.config import ConfigError
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="tooldex", description="ToolDex command-line interface.")
-    subparsers = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(
+        prog="tooldex", 
+        description="ToolDex command-line interface.",
+        epilog="Common commands:\n"
+               "  tooldex codex              # Run Codex agent with ToolDex configuration\n"
+               "  tooldex codex init-config  # Initialize a custom configuration file\n"
+               "  tooldex init               # Shortcut for 'tooldex codex init-config'\n"
+               "\n"
+               "For detailed help on any command:\n"
+               "  tooldex <command> -h       # e.g., 'tooldex codex -h'\n"
+               "  tooldex codex init-config -h  # Help for config initialization",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     parser.add_argument(
         "-C",
@@ -19,9 +31,51 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to a Codex config file applied to commands that support it.",
     )
 
+    # Add 'init' as a top-level shortcut command for easier discovery
+    init_shortcut_parser = subparsers.add_parser(
+        "init",
+        help="Initialize a custom Codex configuration file (shortcut for 'codex init-config').",
+        description="Initialize a custom Codex configuration file for modification.\n"
+                    "This is a shortcut for 'tooldex codex init-config'.\n\n"
+                    "The configuration file allows you to customize:\n"
+                    "  • MCP server configurations\n"
+                    "  • Approval policies\n"
+                    "  • Environment variables\n"
+                    "  • Binary paths and arguments\n\n"
+                    "Default location: ~/.tooldex/codex.toml\n\n"
+                    "Example usage:\n"
+                    "  tooldex init                      # Create config at default location\n"
+                    "  tooldex init -p ./my-config.toml  # Create at custom location\n"
+                    "  tooldex init --force              # Overwrite existing config",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    init_shortcut_parser.add_argument(
+        "-p",
+        "--path",
+        dest="path",
+        help="Custom destination path for the config file (default: ~/.tooldex/codex.toml).",
+    )
+    init_shortcut_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite the destination file if it already exists.",
+    )
+    init_shortcut_parser.set_defaults(handler=_handle_codex_init)
+
     codex_parser = subparsers.add_parser(
         "codex",
-        help="Execute the Codex agent CLI using ToolDex configuration.",
+        help="Execute the Codex agent CLI or manage its configuration.",
+        description="Execute the Codex agent CLI with ToolDex configuration.\n\n"
+                    "Configuration Search Order:\n"
+                    "  1. Explicit path (--config flag)\n"
+                    "  2. TOOLDEX_CODEX_CONFIG environment variable\n"
+                    "  3. ./.tooldex/codex.toml (current directory)\n"
+                    "  4. $TOOLDEX_CONFIG_DIR/codex.toml\n"
+                    "  5. $XDG_CONFIG_HOME/tooldex/codex.toml or ~/.config/tooldex/codex.toml\n"
+                    "  6. ~/.tooldex/codex.toml\n"
+                    "  7. Built-in default configuration\n\n"
+                    "Use 'tooldex codex init-config' to create a custom configuration file.",
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     codex_parser.add_argument(
         "-c",
@@ -31,22 +85,35 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     codex_parser.set_defaults(handler=_handle_codex_run, codex_args=[], codex_command=None)
 
-    codex_subparsers = codex_parser.add_subparsers(dest="codex_command")
+    codex_subparsers = codex_parser.add_subparsers(
+        dest="codex_command",
+        help="Codex subcommands (use 'tooldex codex <subcommand> -h' for help)"
+    )
 
     init_parser = codex_subparsers.add_parser(
         "init-config",
-        help="Copy the bundled Codex config to a writable location for customization.",
+        help="Initialize a custom Codex configuration file.",
+        description="Copy the bundled Codex configuration template to a user-writable location.\n"
+                    "This allows you to customize ToolDex settings, MCP server configurations,\n"
+                    "environment variables, and other options.\n\n"
+                    "Default location: ~/.tooldex/codex.toml\n\n"
+                    "Example usage:\n"
+                    "  tooldex codex init-config                      # Create config at default location\n"
+                    "  tooldex codex init-config -p ./my-config.toml  # Create at custom location\n"
+                    "  tooldex codex init-config --force              # Overwrite existing config\n\n"
+                    "Shortcut: You can also use 'tooldex init' instead of 'tooldex codex init-config'",
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     init_parser.add_argument(
         "-p",
         "--path",
         dest="path",
-        help="Destination for the generated config (default: ~/.tooldex/codex.toml).",
+        help="Custom destination path for the config file (default: ~/.tooldex/codex.toml).",
     )
     init_parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite the destination if it already exists.",
+        help="Overwrite the destination file if it already exists.",
     )
     init_parser.set_defaults(handler=_handle_codex_init)
 
@@ -62,7 +129,13 @@ def _handle_codex_run(args: argparse.Namespace) -> int:
 
 def _handle_codex_init(args: argparse.Namespace) -> int:
     destination = init_codex_config(args.path, args.force)
-    print(f"Wrote Codex config to {destination}")
+    print(f"✓ Successfully created Codex configuration at: {destination}")
+    print(f"\nYou can now customize this configuration file to:")
+    print("  • Set custom MCP server configurations")
+    print("  • Adjust approval policies")
+    print("  • Configure environment variables")
+    print("  • Modify binary paths and arguments")
+    print(f"\nTo use this config, run: tooldex codex --config {destination}")
     return 0
 
 
