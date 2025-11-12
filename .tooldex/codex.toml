@@ -1,0 +1,21 @@
+[tooldex]
+binary = "codex"
+args = []
+config_flag = "--config"
+terminal_mcp = "tooldex-shell"
+
+[tooldex.env]
+# CODEX_HOME = "~/.tooldex/codex"
+
+[codex]
+approval_policy = "on-request"
+
+[codex.mcp_servers.tooldex-shell]
+command = "./.venv/bin/python"
+args = ["-m", "src.tooldex.mcp"]
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+
+[codex.mcp_servers.tooldex-shell.env]
+# TOOLDEX_PRIMARY_PANE is injected dynamically at runtime.
+PYTHONUNBUFFERED = "1"
